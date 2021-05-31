@@ -1,4 +1,6 @@
 # GDMC 2021 Submission
+Developed by [Matthew Hickey](github.com/matthickey709) and [Alex Porter](github.com/abporter).
+
 This project was forked from [gdmc_http_client_python](https://github.com/nilsgawlik/gdmc_http_client_python) to use the library functions as a starting point for communicating with the HTTP API.
 
 # Final Submission
