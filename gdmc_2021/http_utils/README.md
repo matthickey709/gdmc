@@ -8,8 +8,6 @@ You need to have Minecraft running, the mod installed and a world open for this 
 
 ### Scripts:
 
-**`example.py`**: Demonstrates all of the basic gdmc-http functionality by building a very simple village. It uses the utility functions implemented in `worldLoader.py` and `mapUtils.py`.
-
 **`visualizeMap.py`**: Displays a map of the minecraft world, using OpenCV
 
 #### Created by:
