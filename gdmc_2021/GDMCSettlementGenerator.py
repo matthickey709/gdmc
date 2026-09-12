@@ -122,8 +122,8 @@ class GDMCSettlementGenerator:
 
         origin_x, origin_z = Config().build_area_origin
         footprint = self.HEIGHTMAP[xmin - origin_x:xmax - origin_x + 1, zmin - origin_z:zmax - origin_z + 1]
-        corners = [heightAt(xmin, zmin, self.HEIGHTMAP), heightAt(xmin, zmax, self.HEIGHTMAP),
-                   heightAt(xmax, zmin, self.HEIGHTMAP), heightAt(xmax, zmax, self.HEIGHTMAP)]
+        # statistics can't take numpy integers on newer Pythons, so convert the heights
+        corners = [int(heightAt(x, z, self.HEIGHTMAP)) for x, z in [(xmin, zmin), (xmin, zmax), (xmax, zmin), (xmax, zmax)]]
 
         return (statistics.stdev(corners) + 1) ** 3, int(np.median(footprint))
 
