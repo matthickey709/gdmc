@@ -1,7 +1,9 @@
 name: Tests
 
 on:
+  # Branches with a pull request are tested by the pull_request event, so only run on push for main
   push:
+    branches: [main]
   pull_request:
 
 jobs:
