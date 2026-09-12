@@ -14,13 +14,13 @@ class Structure:
             return True
 
     def isInBuildArea(self, build_area):
-        # FIXME: With the latest changes to north/south facing buildings this check isn't adequate. Need to get genx/z
         # Quick length check
-        if self.r[2] >= build_area[2] or self.r[3] >= build_area[3]:
+        if self.r[2] > build_area[2] or self.r[3] > build_area[3]:
             # plot is too long/wide
             return False
         bottom_left_in = build_area[0] <= self.r[0] < build_area[0] + build_area[2] and build_area[1] <= self.r[1] < build_area[1] + build_area[3]
-        top_right = self.r[0] + self.r[2], self.r[1] + self.r[3]
+        # last block covered by the plot
+        top_right = self.r[0] + self.r[2] - 1, self.r[1] + self.r[3] - 1
         top_right_in = build_area[0] <= top_right[0] < build_area[0] + build_area[2] and build_area[1] <= top_right[1] < build_area[1] + build_area[3]
 
         return bottom_left_in and top_right_in

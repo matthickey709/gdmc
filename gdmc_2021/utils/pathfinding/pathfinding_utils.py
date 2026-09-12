@@ -53,6 +53,9 @@ def create_mst_from_graph(graph: dict, start: int = 0):
     """
     print("Creating MST from graph...")
     mst = defaultdict(set)
+    if start not in graph:
+        # Fewer than two nodes, so there is nothing to connect
+        return mst
     visited = {start}
     edges = [(cost, start, to) for to, cost in graph[start].items()]
     heapq.heapify(edges)

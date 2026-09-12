@@ -1,8 +1,8 @@
 import numpy as np
-import re
 
 from config import Config
 from http_utils import interfaceUtils
+from utils import blockUtils
 from utils.blockUtils import Direction
 from utils import biomeUtils
 
@@ -37,17 +37,17 @@ RELATIVE_ROTATIONS = {
     }
 }
 
+# Number of 90 degree clockwise turns from the serialized (EAST) orientation
+QUARTER_TURNS_CW = {
+    Direction.EAST: 0,
+    Direction.SOUTH: 1,
+    Direction.WEST: 2,
+    Direction.NORTH: 3
+}
+
 
 def getBlock(x, y, z) -> str:
     return interfaceUtils.getBlockState(x, y, z)
-
-
-def setBlock(blockCoord, block, use_batching=True):
-    x, y, z = blockCoord
-    if use_batching:
-        interfaceUtils.placeBlockBatched(x, y, z, block, 200)
-    else:
-        interfaceUtils.setBlock(x, y, z, block)
 
 
 def serialize_rect_prism(corner1: (int, int), corner2: (int, int), ground_height: int, max_height: int):
@@ -93,6 +93,41 @@ def reload_3d_from_file(filename: str, shaping_factor: int) -> np.array:
     return to_return
 
 
+def rotate_block_state(block: str, build_dir: 'Direction') -> str:
+    """
+    Rotates the directional parts of a block's state so the block matches a structure built in build_dir.
+    Handles facing=<direction>, connections keyed by direction (e.g. fences' north=true, redstone's east=side),
+    axis=x|z (e.g. logs) and the 16-step rotation=<n> used by signs and banners.
+    :param block: block id with optional state, e.g. oak_stairs[facing=east,half=bottom]
+    :param build_dir: the direction the structure is being built in. EAST is how structures were serialized.
+    :return: the block with its state rotated
+    """
+    turns = QUARTER_TURNS_CW[build_dir]
+    if turns == 0 or '[' not in block:
+        return block
+
+    new_dirs = RELATIVE_ROTATIONS[build_dir]
+    name, state = block.split('[', 1)
+    properties = []
+    for prop in state.rstrip(']').split(','):
+        if not prop:
+            # Blocks without any state were serialized with empty brackets, e.g. air[]
+            continue
+        key, value = prop.split('=', 1)
+        if key == "facing" and value in new_dirs:
+            value = new_dirs[value]
+        elif key in new_dirs:
+            key = new_dirs[key]
+        elif key == "axis" and value in ("x", "z") and turns % 2 == 1:
+            value = "z" if value == "x" else "x"
+        elif key == "rotation" and value.isdigit():
+            # 4 steps of rotation is 90 degrees clockwise
+            value = str((int(value) + 4 * turns) % 16)
+        properties.append("{}={}".format(key, value))
+
+    return "{}[{}]".format(name, ",".join(properties))
+
+
 def build_from_3d_array(data: np.array, corner: (int, int, int), build_dir: 'Direction' = Direction.EAST,
                         biome: 'biomeUtils.BiomeGroup' = biomeUtils.BiomeGroup.DEFAULT):
     """
@@ -106,11 +141,7 @@ def build_from_3d_array(data: np.array, corner: (int, int, int), build_dir: 'Dir
     """
     # x z y
     arr_size = data.shape
-    # TODO: Get from config
     use_batching = Config().use_batching
-
-    new_dir_map = RELATIVE_ROTATIONS[build_dir]
-    directions = ["north", "south", "east", "west"]
 
     def rotate_coordinate_about_corner(coord: (int, int, int)) -> (int, int, int):
         """
@@ -135,20 +166,15 @@ def build_from_3d_array(data: np.array, corner: (int, int, int), build_dir: 'Dir
     for x in range(arr_size[0]):
         for z in range(arr_size[1]):
             for y in range(arr_size[2]):
-                block = data[x][z][y]
                 # change direction according to build_dir
-                facing = re.findall(r"facing=(?=(" + '|'.join(directions) + r"))", block)
-                if facing:
-                    newBlock = re.sub(facing[0], new_dir_map[facing[0]], block)
-                else:
-                    newBlock = block
+                newBlock = rotate_block_state(data[x][z][y], build_dir)
                 # Take the block and find if it needs to be updated for current biome
                 newBlock = biomeUtils.get_biome_equivalent(newBlock, biome)
                 # put the block in world-space
                 world_space = tuple(map(lambda i, j: i + j, (x, y, z), corner))
                 # rotate if not building east
                 target = rotate_coordinate_about_corner(world_space)
-                setBlock(target, newBlock, use_batching)
+                blockUtils.setBlock(*target, newBlock)
         print("done column {} of {}".format(x, arr_size[0]))
 
     if use_batching:

@@ -1,18 +1,19 @@
 """
-This is the file that contains the actual settlement generator. 
+This is the file that contains the actual settlement generator.
 """
 
 from multiprocessing import Process
+import os
 import time
 import random
 import statistics
-import math
 import numpy as np
 
-from config import Config
+from config import Config, ROOT_DIR
 from http_utils import interfaceUtils, mapUtils
 from http_utils.worldLoader import WorldSlice
 import utils.structure_serialization
+from utils import blockUtils
 from utils.blockUtils import Direction, plot_direction_from_string, string_from_direction, heightAt
 from utils import structure, biomeUtils
 from utils.pathfinding import pathfinding_utils
@@ -28,13 +29,11 @@ class GDMCSettlementGenerator:
 
     def __init__(self, build_area: dict = None):
         """
-        Not sure if anything needs to be done here.
-        :param build_area: represents the build area. If specified in argument needs to be in form (xstart, zstart, xlength, zlength)
+        :param build_area: represents the build area. If not specified it is requested from Minecraft. Needs to be a
+            dict with the keys xFrom, zFrom, xTo and zTo.
         :return: Instance of GDMCSettlementGenerator
         """
-        Config()
         # TODO: Take in the biome stuff, but config defaults it to not force biome
-        self.use_batching = Config().use_batching
         # Find the area for building
         self.AREA = None
         self.determine_build_area(build_area=build_area)
@@ -47,7 +46,6 @@ class GDMCSettlementGenerator:
         self.HEIGHTMAP = mapUtils.calcGoodHeightmap(self.WORLD_SLICE)
         self.pathfinding_points = []
         self.debug = False
-        # TODO: Turn on
         self.build_roads = True
 
     def determine_build_area(self, build_area) -> None:
@@ -71,19 +69,13 @@ class GDMCSettlementGenerator:
 
     def setBlock(self, x, y, z, block):
         """Place blocks or add them to batch."""
-        if self.use_batching:
-            # add block to buffer, send once buffer has 100 items in it
-            interfaceUtils.placeBlockBatched(x, y, z, block, 100)
-        else:
-            interfaceUtils.setBlock(x, y, z, block)
+        blockUtils.setBlock(x, y, z, block)
 
     def build_from_file(self, x, y, z, structName, direction):
         corner = (x, y, z)
-        # TODO: os.path.join this
-        filename = "structures/" + Config().structures[structName]["build_type"] + "/" + Config().structures[structName][
-            "filename"]
-        data = utils.structure_serialization.reload_3d_from_file(filename,
-                                                                 Config().structures[structName]["scaling_factor"])
+        struct = Config().structures[structName]
+        filename = os.path.join(ROOT_DIR, "structures", struct["build_type"], struct["filename"])
+        data = utils.structure_serialization.reload_3d_from_file(filename, struct["scaling_factor"])
 
         if Config().force_biome:
             biome = Config().forced_biome
@@ -118,19 +110,22 @@ class GDMCSettlementGenerator:
         return False
 
     def get_plot_flatness(self, structure):
+        """
+        :param structure: plot that lies inside the build area
+        :return: (flatness score, where 1 is flat and larger is bumpier, based on the plot's four corners;
+            median height of the plot)
+        """
         xmin = structure.r[0]
         xmax = structure.r[0] + structure.r[2] - 1
         zmin = structure.r[1]
         zmax = structure.r[1] + structure.r[3] - 1
 
-        heights = []
-        for x in range(xmin, xmax - 1):
-            for z in range(zmin, zmax - 1):
-                heights.append(heightAt(x, z, self.HEIGHTMAP))
+        origin_x, origin_z = Config().build_area_origin
+        footprint = self.HEIGHTMAP[xmin - origin_x:xmax - origin_x + 1, zmin - origin_z:zmax - origin_z + 1]
+        corners = [heightAt(xmin, zmin, self.HEIGHTMAP), heightAt(xmin, zmax, self.HEIGHTMAP),
+                   heightAt(xmax, zmin, self.HEIGHTMAP), heightAt(xmax, zmax, self.HEIGHTMAP)]
 
-        return (statistics.stdev([heightAt(xmin, zmin, self.HEIGHTMAP), heightAt(xmin, zmin, self.HEIGHTMAP),
-                                  heightAt(xmax, zmin, self.HEIGHTMAP), heightAt(xmax, zmax, self.HEIGHTMAP)])
-                + 1) ** 3, statistics.median(heights)
+        return (statistics.stdev(corners) + 1) ** 3, int(np.median(footprint))
 
     @staticmethod
     def get_build_direction(struct_name: str, goal_direction: Direction) -> Direction:
@@ -179,65 +174,73 @@ class GDMCSettlementGenerator:
         print("Unexpected behaviour determining direction to middle. Defaulting to east.")
         return Direction.EAST
 
+    @staticmethod
+    def build_origin_for_plot(x: int, z: int, length: int, width: int, build_direction: Direction) -> (int, int):
+        """
+        build_from_3d_array rotates a structure about the corner it is given, so unless the structure is built EAST
+        that corner isn't the plot's lowest (x, z). Finds the corner that makes the built structure cover exactly the
+        plot [x, x + length) by [z, z + width).
+        :param length: plot size along x, already swapped with width for NORTH/SOUTH builds
+        :param width: plot size along z, already swapped with length for NORTH/SOUTH builds
+        :return: (x, z) corner to pass to build_from_3d_array
+        """
+        if build_direction == Direction.SOUTH:
+            return x + length - 1, z
+        if build_direction == Direction.WEST:
+            return x + length - 1, z + width - 1
+        if build_direction == Direction.NORTH:
+            return x, z + width - 1
+        return x, z
+
+    @staticmethod
+    def perimeter_coordinates(area: (int, int, int, int)):
+        """
+        :param area: (x start, z start, x length, z length)
+        :return: generator over each (x, z) coordinate on the edge of area, once each
+        """
+        xs, zs, xl, zl = area
+        for x in range(xs, xs + xl):
+            yield x, zs
+            yield x, zs + zl - 1
+        for z in range(zs + 1, zs + zl - 1):
+            yield xs, z
+            yield xs + xl - 1, z
+
+    @staticmethod
+    def should_build_fence(x: int, z: int, area: (int, int, int, int), opening_denominator: int = 5) -> bool:
+        """
+        The perimeter fence is left open in the middle 1/opening_denominator of each side to make a gate.
+        :param x: x coordinate on the perimeter of area
+        :param z: z coordinate on the perimeter of area
+        :param area: (x start, z start, x length, z length)
+        :return: False if (x, z) is part of a gate
+        """
+        xs, zs, xl, zl = area
+        fenced_fraction = (opening_denominator // 2) / opening_denominator
+        in_x_opening = xs + fenced_fraction * xl <= x < xs + xl - fenced_fraction * xl
+        in_z_opening = zs + fenced_fraction * zl <= z < zs + zl - fenced_fraction * zl
+        on_north_or_south_edge = z == zs or z == zs + zl - 1
+        on_west_or_east_edge = x == xs or x == xs + xl - 1
+        return not ((on_north_or_south_edge and in_x_opening) or (on_west_or_east_edge and in_z_opening))
+
+    @staticmethod
+    def area_inside_fence(area: (int, int, int, int)) -> (int, int, int, int):
+        return area[0] + 1, area[1] + 1, area[2] - 2, area[3] - 2
+
     def generate_settlement(self) -> None:
 
         structureNames = list(Config().structures.keys())
 
-        structures = {
-            "houses": 0,
-            "utilities": 0,
-            "city": 0
-        }
-
         print("Beginning settlement generation...")
         print("Build area is at position {}, {} with size {}, {}".format(*self.AREA))
         # build a fence along the perimeter with access points in the middle for a fifth of the length/width
-        opening_denominator = 5
-        opening_offset = opening_denominator // 2
-        fenced_fraction = opening_offset / opening_denominator
-
-        def should_build_fence(x_, z_) -> bool:
-            xs, zs, xl, zl = self.AREA
-            # far left edge
-            if xs + fenced_fraction * xl <= x_ < xs + xl - fenced_fraction * xl and z_ == zs:
-                return False
-            # bottom edge
-            if zs + fenced_fraction * zl <= z_ < zs + zl - fenced_fraction * zl and x_ == xs:
-                return False
-            # top edge
-            if zs + fenced_fraction * zl <= z_ < zs + zl - fenced_fraction * zl and x_ == xs + xl:
-                return False
-            # right edge
-            if xs + fenced_fraction * xl <= x_ < xs + xl - fenced_fraction * xl and z_ == zs + zl:
-                return False
-            return True
-
-        for x in range(self.AREA[0], self.AREA[0] + self.AREA[2]):
-            z = self.AREA[1]
+        for x, z in self.perimeter_coordinates(self.AREA):
             y = heightAt(x, z, self.HEIGHTMAP)
             self.setBlock(x, y - 1, z, "cobblestone")
-            if should_build_fence(x, z):
-                self.setBlock(x, y, z, "oak_fence")
-        for z in range(self.AREA[1], self.AREA[1] + self.AREA[3]):
-            x = self.AREA[0]
-            y = heightAt(x, z, self.HEIGHTMAP)
-            self.setBlock(x, y - 1, z, "cobblestone")
-            if should_build_fence(x, z):
-                self.setBlock(x, y, z, "oak_fence")
-        for x in range(self.AREA[0], self.AREA[0] + self.AREA[2]):
-            z = self.AREA[1] + self.AREA[3] - 1
-            y = heightAt(x, z, self.HEIGHTMAP)
-            self.setBlock(x, y - 1, z, "cobblestone")
-            if should_build_fence(x, z):
-                self.setBlock(x, y, z, "oak_fence")
-        for z in range(self.AREA[1], self.AREA[1] + self.AREA[3]):
-            x = self.AREA[0] + self.AREA[2] - 1
-            y = heightAt(x, z, self.HEIGHTMAP)
-            self.setBlock(x, y - 1, z, "cobblestone")
-            if should_build_fence(x, z):
+            if self.should_build_fence(x, z, self.AREA):
                 self.setBlock(x, y, z, "oak_fence")
 
-        area_in_fence = (self.AREA[0] + 1, self.AREA[1] + 1, self.AREA[2] - 1, self.AREA[3] - 1)
+        area_in_fence = self.area_inside_fence(self.AREA)
         print("AREA: {}, area_in_fence: {}".format(self.AREA, area_in_fence))
 
         print("Generating structures...")
@@ -249,33 +252,22 @@ class GDMCSettlementGenerator:
                 middle_direction = self.get_middle_direction(x, z, area_in_fence)
                 # build_direction is the argument passed to the build function to ensure the entrance is facing correct
                 build_direction = self.get_build_direction(struct, middle_direction)
-                genx = x
-                genz = z
                 # length is along the x axis w.r.t. how it was serialized. width along the z
                 length, width = Config().structures[struct]["length"], Config().structures[struct]["width"]
                 if build_direction == Direction.NORTH or build_direction == Direction.SOUTH:
                     length, width = width, length
-                if build_direction == Direction.WEST:
-                    genx = x + length
-                    genz = z + width
-                if build_direction == Direction.SOUTH:
-                    genx = x + width
-                    genz = z
-                if build_direction == Direction.NORTH:
-                    genx = x
-                    genz = z + length
+                genx, genz = self.build_origin_for_plot(x, z, length, width, build_direction)
 
                 plot = structure.Structure(x, z, length, width, middle_direction)
-                # If the plot doesn't overlap with another one, and is inside the build area
-                if not self.check_overlap(plot) and plot.isInBuildArea(area_in_fence) and \
-                        self.point_contained_in((genx, genz), area_in_fence) and self.point_contained_in((x, z), area_in_fence):
-                    plot_flatness, plot_min_height = self.get_plot_flatness(plot)
+                # If the plot is inside the fence and doesn't overlap with another one
+                if plot.isInBuildArea(area_in_fence) and not self.check_overlap(plot):
+                    plot_flatness, plot_height = self.get_plot_flatness(plot)
                     if Config().structures[struct]["weight"] * 0.05 / plot_flatness > random.random():
                         print("building structure {}".format(struct))
                         print(" Building dimensions:")
                         print(plot.r)
                         print(genx, genz)
-                        self.build_from_file(genx, plot_min_height - 1, genz, struct,
+                        self.build_from_file(genx, plot_height - 1, genz, struct,
                                              build_direction)
                         self.spawn_villagers(plot)
                         self.building_plots.append(plot)
@@ -285,9 +277,12 @@ class GDMCSettlementGenerator:
         """
         for plot in self.building_plots:
             node = pathfinding_utils.graph_node_for_building_plot(plot.r, plot.direction)
-            self.pathfinding_points.append(node)
+            if self.point_contained_in(node, self.AREA):
+                self.pathfinding_points.append(node)
+            else:
+                print("Road node {} for plot {} is outside the build area, leaving it off the road network".format(node, plot.r))
 
-        if self.build_roads:
+        if self.build_roads and len(self.pathfinding_points) >= 2:
             plots = [plot.r for plot in self.building_plots]
             graph = dict(pathfinding_utils.create_graph_from_coordinates(self.pathfinding_points))
             print("Generating MST of structures in the settlement")
@@ -306,30 +301,17 @@ class GDMCSettlementGenerator:
             if self.debug:
                 print("Pathfinding nodes: {}".format(self.pathfinding_points))
 
-            # This shouldn't need to happen but need to prune possible nodes that aren't in the build area
-            for point in self.pathfinding_points:
-                x, z = point
-                if not (self.AREA[0] <= x < self.AREA[0] + self.AREA[2] and self.AREA[1] <= z < self.AREA[1] + self.AREA[3]):
-                    print("point {} not inside build area, this shouldn't happen!".format(point))
-            self.pathfinding_points = [p for p in self.pathfinding_points if (self.AREA[0] <= x < self.AREA[0] + self.AREA[2] and self.AREA[1] <= z < self.AREA[1] + self.AREA[3])]
-            if self.debug:
-                print("New pathfinding nodes after delete: {}".format(self.pathfinding_points))
-
-            builders = []
+            # Find and place each road before moving on to the next, so roads finished before the timeout are kept
             for node in mst.keys():
                 for neighbour in list(mst[node]):
                     builder = PathBuilder(start=self.pathfinding_points[node], goal=self.pathfinding_points[neighbour],
                                           world_slice=self.WORLD_SLICE, legal_actions=legal_actions,
                                           path_config=path_config, build_in_minecraft=True)
-                    builders.append(builder)
+                    builder.build_path()
 
-            # Path calculations
-            for builder in builders:
-                builder.determine_path()
-
-            # Path placement
-            for builder in builders:
-                builder.place_path()
+        if Config().use_batching:
+            # push out any blocks remaining in the buffer, e.g. the fence if no structures were built
+            interfaceUtils.sendBlocks()
 
     @staticmethod
     def point_contained_in(point: (int, int), area: (int, int, int, int)) -> bool:
@@ -354,13 +336,14 @@ if __name__ == "__main__":
         timeout_in_minutes = 10
     timeout_in_minutes = int(timeout_in_minutes)
     timeout_in_seconds = 60 * timeout_in_minutes
-    Config().overall_timeout = timeout_in_seconds
     print("Beginning generation with a timeout of {} minutes...".format(timeout_in_minutes))
     start = time.time()
+    # Generation runs in its own process so it can be stopped at the time limit. That process sends its blocks to
+    # Minecraft as each structure and road is finished; anything still in its buffer when it is stopped is lost.
     main_process = Process(target=main)
     main_process.start()
     main_process.join(timeout=timeout_in_seconds)
-    main_process.terminate()
-    # push out any remaining blocks in the buffer
-    interfaceUtils.sendBlocks()
+    if main_process.is_alive():
+        print("Timeout reached, stopping settlement generation")
+        main_process.terminate()
     print("Finished settlement generation in {}s ({}mins)".format(time.time() - start, (time.time() - start)/60))

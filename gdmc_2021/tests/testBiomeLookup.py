@@ -15,11 +15,19 @@ class TestBiomeLookup(unittest.TestCase):
         new_block = biomeUtils.get_biome_equivalent(block, biomeUtils.BiomeGroup.DEFAULT)
         self.assertEqual(block, new_block)
 
-    def test_plank_desert(self):
-        blocks = ["oak_planks", "cedar_planks", "birch_planks"]
-        for block in blocks:
-            new_block = biomeUtils.get_biome_equivalent(block, biomeUtils.BiomeGroup.WARM)
-            self.assertEqual("cut_sandstone", new_block)
+    def test_block_without_equivalent_is_unchanged(self):
+        block = "oak_planks"
+        new_block = biomeUtils.get_biome_equivalent(block, biomeUtils.BiomeGroup.WARM)
+        self.assertEqual(block, new_block)
+
+    def test_sand_default(self):
+        new_block = biomeUtils.get_biome_equivalent("sand", biomeUtils.BiomeGroup.DEFAULT)
+        self.assertEqual("grass_block", new_block)
+
+    def test_state_is_dropped_from_replacement_without_facing(self):
+        block = "scaffolding[bottom=false,distance=0,waterlogged=false]"
+        new_block = biomeUtils.get_biome_equivalent(block, biomeUtils.BiomeGroup.DEFAULT)
+        self.assertEqual("oak_planks", new_block)
 
     def test_cobble_default(self):
         block = "cobblestone"

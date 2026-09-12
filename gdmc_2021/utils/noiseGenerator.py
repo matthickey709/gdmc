@@ -99,7 +99,7 @@ class ManualFractalNoise:
 
                 # Blend the two bottom corners
                 bottom = ManualFractalNoise.interpolate(
-                    base_noise[sample_j0][sample_i0],
+                    base_noise[sample_j1][sample_i0],
                     base_noise[sample_j1][sample_i1],
                     horizontal_blend)
 

@@ -1,8 +1,7 @@
+import heapq
+import itertools
 import numpy as np
-from math import sqrt
 from dataclasses import dataclass
-from queue import PriorityQueue
-import functools
 import random
 
 from config import Config
@@ -34,42 +33,48 @@ class PathBuilder:
         self.local_start = start[0] - Config().build_area_origin[0], start[1] - Config().build_area_origin[1]
         self.local_goal = goal[0] - Config().build_area_origin[0], goal[1] - Config().build_area_origin[1]
 
-        # A* open and closed list
-        self.open = PriorityQueue()
-        self.open.put(ComparableNode(self.local_start, None, None, 0, self.heuristic(self.local_start, self.local_goal)))
-        self.closed = np.full_like(self.heightmap, 0)
+        # A* open list (a heap of (f, h, insertion order, node)) and closed list
+        self.open = []
+        self._insertion_order = itertools.count()
+        self.push(AStarNode(self.local_start, None, None, 0, self.heuristic(self.local_start, self.local_goal)))
+        self.closed = np.zeros(self.heightmap.shape, dtype=bool)
 
         # numpy array to store which coordinates will be part of the path in local coordinates.
         self.path = np.full_like(self.heightmap, 0)
+        # local coordinates along the centre of the path, from start to goal
+        self.path_coordinates = []
 
         self.build_in_minecraft = build_in_minecraft
 
-    def build_path(self):
+    def build_path(self) -> bool:
         """
         Called from object owner to start the path generation process. Calls determine_path()
         to determine which blocks need to be placed for the path, then calls place_path() to generate
         the path in the minecraft world.
-        :return:
+        :return: True if a path was found, False otherwise
         """
         print("Attempting to build path from {} to {}".format(self.world_start, self.world_goal))
         try:
             self.determine_path()
         except PathNotFoundError:
             print("Couldn't find a legal path from {} to {}, skipping this edge of MST!".format(self.world_start, self.world_goal))
+            return False
         if self.build_in_minecraft:
             self.place_path()
+        return True
 
     @staticmethod
     def heuristic(start: (int, int), goal: (int, int)) -> int:
         """
-        Heuristic function for building path
+        Heuristic function for building path. Octile distance, in the same units as the movement costs so that it
+        guides the search (a smaller scale is still admissible but makes A* expand almost every node).
         :param start: Starting grid coordinate (x, z)
         :param goal: Ending grid coordinate (x, z)
         :return: Heuristic value to determine next steps for pathfinding
         """
         dx = abs(start[0] - goal[0])
         dz = abs(start[1] - goal[1])
-        D, D2 = 1, sqrt(2)
+        D, D2 = Config().heuristic_base_cost, Config().heuristic_base_cost_diag
         return D * (dx + dz) + (D2 - 2 * D) * min(dx, dz)
 
     def determine_path(self):
@@ -77,11 +82,10 @@ class PathBuilder:
         An A* Pathfinding Algorithm to connect self.start with self.goal
         :return: None, calculates the path and stores in class. Raises PathNotFoundError if it cannot be done.
         """
-        while True:
-            if not self.open:
-                # This is a failure.
-                raise PathNotFoundError
+        if not (self.in_grid(self.local_start) and self.in_grid(self.local_goal)):
+            raise PathNotFoundError
 
+        while self.open:
             node = self.pop_min_f()
             coord = node.coordinate
 
@@ -102,10 +106,13 @@ class PathBuilder:
                     # Already checked
                     continue
                 rg = node.g + (Config().heuristic_base_cost_diag if bool(action[0]) and bool(action[1]) else Config().heuristic_base_cost)
-                rh = self.heuristic(coord, self.local_goal)
+                rh = self.heuristic((rx, rz), self.local_goal)
 
                 # Put the node in the queue
-                self.open.put(ComparableNode((rx, rz), node, action, rg, rh))
+                self.push(AStarNode((rx, rz), node, action, rg, rh))
+
+        # Every reachable coordinate has been checked without finding the goal.
+        raise PathNotFoundError
 
     def place_path(self):
         for x in range(self.path.shape[0]):
@@ -141,10 +148,17 @@ class PathBuilder:
     def should_spawn_golem(self):
         return self.path_config['golem_spawn_rate'] > random.random()
 
-    def pop_min_f(self) -> 'ComparableNode':
-        return self.open.get()
+    def in_grid(self, coord: (int, int)) -> bool:
+        return 0 <= coord[0] < self.heightmap.shape[0] and 0 <= coord[1] < self.heightmap.shape[1]
 
-    def isAtGoal(self, node: 'ComparableNode') -> bool:
+    def push(self, node: 'AStarNode') -> None:
+        # Ties on f are broken towards the node closer to the goal, then by insertion order so nodes are never compared
+        heapq.heappush(self.open, (node.g + node.h, node.h, next(self._insertion_order), node))
+
+    def pop_min_f(self) -> 'AStarNode':
+        return heapq.heappop(self.open)[-1]
+
+    def isAtGoal(self, node: 'AStarNode') -> bool:
         if node.coordinate == self.local_goal:
             self.set_path(node)
             return True
@@ -153,10 +167,12 @@ class PathBuilder:
     def set_path(self, node):
         while node is not None:
             coord = node.coordinate
+            self.path_coordinates.append(coord)
             for x in range(max(coord[0] - self.path_width, 0), min(coord[0] + self.path_width + 1, len(self.path))):
                 for z in range(max(coord[1] - self.path_width, 0), min(coord[1] + self.path_width + 1, len(self.path[coord[0]]))):
                     self.path[x][z] = 1
             node = node.parent
+        self.path_coordinates.reverse()
 
 
 @dataclass
@@ -166,19 +182,6 @@ class AStarNode(object):
     action: list[int]
     g: int
     h: int
-
-
-@functools.total_ordering
-class ComparableNode(AStarNode):
-    """
-    Just like AStarNode but overridden > and == operators
-    so it can be used in a priority queue based on f = g+h
-    """
-    def __gt__(self, other):
-        return self.g + self.h > other.g + other.h
-
-    def __eq__(self, other):
-        return self.g + self.h == other.g + other.h
 
 
 class PathNotFoundError(Exception):
