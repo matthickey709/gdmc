@@ -2,21 +2,26 @@ import unittest
 
 from utils.blockUtils import BlockRotation
 from http_utils.interfaceUtils import setBlock, getBlock
+from tests.helpers import MINECRAFT_BUILD_AREA, requires_minecraft
 
 
+@requires_minecraft
 class TestFloorSignPlacement(unittest.TestCase):
     """
     Test suite to test floor sign placement.
     NOTE: Must have Minecraft running with the HTTP mod installed.
     """
 
+    def setUp(self) -> None:
+        self.x, self.y, self.z = MINECRAFT_BUILD_AREA["xFrom"], MINECRAFT_BUILD_AREA["yFrom"], MINECRAFT_BUILD_AREA["zFrom"]
+
     def test_default_orientation(self):
         """
         Test if it is possible to set a sign without specifying a rotation.
         It should face south by default.
         """
-        setBlock(63, 64, 160, "oak_sign")
-        result = getBlock(63, 64, 160)
+        setBlock(self.x, self.y, self.z, "oak_sign")
+        result = getBlock(self.x, self.y, self.z)
         self.assertEqual(result, "minecraft:oak_sign")
 
     def test_non_default_orientation(self):
@@ -27,8 +32,8 @@ class TestFloorSignPlacement(unittest.TestCase):
         Going into the game I can verify that the sign is facing east when this is called. This may be able
         to be done by using the command endpoint of the api.
         """
-        setBlock(63, 64, 160, "oak_sign[rotation={}]".format(BlockRotation.EAST.value))
-        result = getBlock(63, 64, 160)
+        setBlock(self.x, self.y, self.z, "oak_sign[rotation={}]".format(BlockRotation.EAST.value))
+        result = getBlock(self.x, self.y, self.z)
         self.assertEqual(result, "minecraft:oak_sign")
 
 

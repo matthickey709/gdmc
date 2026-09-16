@@ -17,12 +17,9 @@ class Singleton(type):
 
 class Config(metaclass=Singleton):
     use_batching: bool
-    overall_timeout: int
 
     def __init__(self):
         self.use_batching = True
-        self.overall_timeout = 10*60  # 10 mins for the program to run
-        self.world_slice_timeout = 4*60  # 4 mins
         self.heuristic_base_cost = 100
         self.heuristic_base_cost_diag = round(sqrt(self.heuristic_base_cost**2 * 2))
         with open(STRUCTURES_CONFIG) as json_file:

@@ -1,9 +1,11 @@
 import unittest
 
-from http_utils import interfaceUtils, mapUtils
+from http_utils import mapUtils
 from http_utils.worldLoader import WorldSlice
+from tests.helpers import minecraft_build_area_rect, requires_minecraft
 
 
+@requires_minecraft
 class TestGenerateHeightmapViz(unittest.TestCase):
     """
     Class containing "unit tests" for generating the different types of height maps and visualizing them.
@@ -14,14 +16,7 @@ class TestGenerateHeightmapViz(unittest.TestCase):
         Get the build area and determine area and world slice from this information.
         :return: None, sets area and worldSlice
         """
-        buildArea = interfaceUtils.requestBuildArea()
-        if buildArea == -1:
-            self.fail("No build area specified.")
-        x1 = buildArea["xFrom"]
-        z1 = buildArea["zFrom"]
-        x2 = buildArea["xTo"]
-        z2 = buildArea["zTo"]
-        self.area = (x1, z1, x2 - x1, z2 - z1)
+        self.area = minecraft_build_area_rect()
         self.worldSlice = WorldSlice(self.area)
 
     def test_visualizeHeightmap_calcGoodHeightmap(self):

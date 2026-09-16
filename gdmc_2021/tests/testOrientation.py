@@ -1,4 +1,7 @@
 import unittest
+from unittest import mock
+
+from config import Config
 from GDMCSettlementGenerator import GDMCSettlementGenerator
 from utils.blockUtils import Direction
 
@@ -31,14 +34,22 @@ class OrientationTests(unittest.TestCase):
         self.assertEqual(Direction.SOUTH, direction)
 
     # TEST ENTRANCE FACING --> BUILD DIRECTION TESTS
-    def test_high_class_home(self):
+    def test_north_facing_entrance(self):
         # the entrance is facing north in the default east direction
-        struct = "high_class_home"
+        struct = "north_entrance"
         entrance_goals = [Direction.EAST, Direction.SOUTH, Direction.WEST, Direction.NORTH]
         build_dir_goals = [Direction.SOUTH, Direction.WEST, Direction.NORTH, Direction.EAST]
-        for i in range(len(entrance_goals)):
-            build_dir = GDMCSettlementGenerator.get_build_direction(struct, entrance_goals[i])
-            self.assertEqual(build_dir_goals[i], build_dir)
+        with mock.patch.dict(Config().structures, {struct: {"entrance_facing": "north"}}):
+            for i in range(len(entrance_goals)):
+                build_dir = GDMCSettlementGenerator.get_build_direction(struct, entrance_goals[i])
+                self.assertEqual(build_dir_goals[i], build_dir)
+
+    def test_east_facing_entrance(self):
+        # the entrance already faces east as serialized, so the build direction is the entrance goal
+        struct = "east_entrance"
+        with mock.patch.dict(Config().structures, {struct: {"entrance_facing": "east"}}):
+            for goal in Direction:
+                self.assertEqual(goal, GDMCSettlementGenerator.get_build_direction(struct, goal))
 
 
 if __name__ == '__main__':

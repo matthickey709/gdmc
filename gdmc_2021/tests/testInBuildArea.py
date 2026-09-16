@@ -31,6 +31,22 @@ class BuildAreaBoundingTest(unittest.TestCase):
 
         self.assertEqual(False, struct.isInBuildArea(self.build_area))
 
+    def test_plot_filling_build_area_exactly(self):
+        struct = Structure(0, 0, 256, 256, "test")
+
+        self.assertEqual(True, struct.isInBuildArea(self.build_area))
+
+    def test_plot_touching_far_edges(self):
+        # covers x and z 246..255, the last blocks in the build area
+        struct = Structure(246, 246, 10, 10, "test")
+
+        self.assertEqual(True, struct.isInBuildArea(self.build_area))
+
+    def test_plot_one_block_past_far_edge(self):
+        struct = Structure(247, 246, 10, 10, "test")
+
+        self.assertEqual(False, struct.isInBuildArea(self.build_area))
+
 
 if __name__ == '__main__':
     unittest.main()

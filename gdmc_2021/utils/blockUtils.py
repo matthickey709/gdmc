@@ -24,23 +24,21 @@ EIGHT_DIRECTIONAL = CARDINAL + DIAGONAL
 def setBlock(x, y, z, block):
     """Place blocks or add them to batch."""
     if Config().use_batching:
-        # add block to buffer, send once buffer has 100 items in it
+        # add block to buffer, send once buffer has 400 items in it
         interfaceUtils.placeBlockBatched(x, y, z, block, 400)
     else:
         interfaceUtils.setBlock(x, y, z, block)
 
 
 def heightAt(x, z, heightmap):
-    """Access height using local coordinates."""
-    # Warning:
-    # Heightmap coordinates are not equal to world coordinates!
-    try:
-        height = heightmap[(x - Config().build_area_origin[0], z - Config().build_area_origin[1])]
-        return height
-    except IndexError as e:
-        # FIXME: not sure why things are going out of bounds
-        print(e)
-        return 90
+    """
+    Access height using world coordinates.
+    Coordinates outside the heightmap use the height at the nearest edge. Indexing numpy directly would silently wrap
+    negative indices around to the far side of the map instead.
+    """
+    local_x = min(max(x - Config().build_area_origin[0], 0), heightmap.shape[0] - 1)
+    local_z = min(max(z - Config().build_area_origin[1], 0), heightmap.shape[1] - 1)
+    return heightmap[local_x, local_z]
 
 
 class BlockRotation(Enum):

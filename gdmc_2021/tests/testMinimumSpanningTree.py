@@ -35,6 +35,14 @@ class TestMSTAlgorithm(unittest.TestCase):
         expected = {0: {2}, 2: {3}, 3: {1}}
         self.assertEqual(mst, expected)
 
+    def test_mst_with_no_nodes(self):
+        graph = dict(pathfinding.create_graph_from_coordinates([]))
+        self.assertEqual({}, dict(pathfinding.create_mst_from_graph(graph)))
+
+    def test_mst_with_one_node(self):
+        graph = dict(pathfinding.create_graph_from_coordinates([(4, 2)]))
+        self.assertEqual({}, dict(pathfinding.create_mst_from_graph(graph)))
+
 
 if __name__ == '__main__':
     unittest.main()

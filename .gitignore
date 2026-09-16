@@ -1,3 +1,5 @@
 __pycache__
 gdmc_env
 .DS_Store
+.idea/
+.vscode/
